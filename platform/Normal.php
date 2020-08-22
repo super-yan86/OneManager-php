@@ -272,8 +272,10 @@ function setConfigResponse($response)
 
 function OnekeyUpate($auth = 'qkqpttgf', $project = 'OneManager-php', $branch = 'master')
 {
+    $slash = '/';
+    if (strpos(__DIR__, ':')) $slash = '\\';
     // __DIR__ is xxx/platform
-    $projectPath = splitlast(__DIR__, '/')[0];
+    $projectPath = splitlast(__DIR__, $slash)[0];
 
     // 从github下载对应tar.gz，并解压
     $url = 'https://github.com/' . $auth . '/' . $project . '/tarball/' . urlencode($branch) . '/';
@@ -296,7 +298,7 @@ function OnekeyUpate($auth = 'qkqpttgf', $project = 'OneManager-php', $branch = 
     $name = $auth.'-'.$project;
     foreach ($tmp as $f) {
         if ( substr($f, 0, strlen($name)) == $name) {
-            $outPath = $projectPath . '/' . $f;
+            $outPath = $projectPath . $slash . $f;
             break;
         }
     }
@@ -304,23 +306,23 @@ function OnekeyUpate($auth = 'qkqpttgf', $project = 'OneManager-php', $branch = 
     if ($outPath=='') return 0;
 
     //unlink($outPath.'/config.php');
-    rename($projectPath.'/config.php', $outPath.'/config.php');
+    rename($projectPath . $slash . 'config.php', $outPath . $slash . 'config.php');
 
-    return moveFolder($outPath, $projectPath);
+    return moveFolder($outPath, $projectPath, $slash);
 }
 
-function moveFolder($from, $to)
+function moveFolder($from, $to, $slash)
 {
-    if (substr($from, -1)=='/') $from = substr($from, 0, -1);
-    if (substr($to, -1)=='/') $to = substr($to, 0, -1);
+    if (substr($from, -1)==$slash) $from = substr($from, 0, -1);
+    if (substr($to, -1)==$slash) $to = substr($to, 0, -1);
     if (!file_exists($to)) mkdir($to, 0777);
     $handler=opendir($from);
     while($filename=readdir($handler)) {
         if($filename != '.' && $filename != '..'){
-            $fromfile = $from.'/'.$filename;
-            $tofile = $to.'/'.$filename;
+            $fromfile = $from . $slash . $filename;
+            $tofile = $to . $slash . $filename;
             if(is_dir($fromfile)){// 如果读取的某个对象是文件夹，则递归
-                $response = moveFolder($fromfile, $tofile);
+                $response = moveFolder($fromfile, $tofile, $slash);
                 if (api_error(setConfigResponse($response))) return $response;
             }else{
                 //if (file_exists($tofile)) unlink($tofile);
