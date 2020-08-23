@@ -2567,7 +2567,7 @@ function render_list($path = '', $files = '')
         $tmp = splitfirst($html, '<!--BackArrowStart-->');
         $html = $tmp[0];
         $tmp = splitfirst($tmp[1], '<!--BackArrowEnd-->');
-        if ($path !== '/') {
+        if ($path !== $_SERVER['base_path']) {
             $current_url = $_SERVER['PHP_SELF'];
             while (substr($current_url, -1) === '/') {
                 $current_url = substr($current_url, 0, -1);
