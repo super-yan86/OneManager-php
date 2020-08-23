@@ -2529,8 +2529,8 @@ function render_list($path = '', $files = '')
         $html = $tmp[0];
         $tmp = splitfirst($tmp[1], '<!--PathArrayEnd-->');
         $PathArrayStr = $tmp[0];
-        $tmp_path = str_replace('%23', '#', str_replace('&','&amp;', $path));
-        $tmp_url = $_SERVER['base_disk_path'];
+        $tmp_path = $_SERVER['disktag'] . str_replace('%23', '#', str_replace('&','&amp;', $path));
+        $tmp_url = $_SERVER['base_path'];
         while ($tmp_path!='') {
             $tmp1 = splitfirst($tmp_path, '/');
             $folder1 = $tmp1[0];
