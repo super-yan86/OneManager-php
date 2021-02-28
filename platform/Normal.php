@@ -4,7 +4,12 @@ function getpath()
 {
     $_SERVER['firstacceptlanguage'] = strtolower(splitfirst(splitfirst($_SERVER['HTTP_ACCEPT_LANGUAGE'],';')[0],',')[0]);
     if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) $_SERVER['REMOTE_ADDR'] = $_SERVER['HTTP_X_FORWARDED_FOR'];
-    $_SERVER['base_path'] = path_format(substr($_SERVER['SCRIPT_NAME'], 0, -10) . '/');
+    $_SERVER['host'] = $_SERVER['REQUEST_SCHEME'] . '://' . $_SERVER['HTTP_HOST'];
+    //if ($_SERVER['HTTP_REFERER']!='') 
+    $_SERVER['referhost'] = explode('/', $_SERVER['HTTP_REFERER'])[2];
+    if (isset($_SERVER['DOCUMENT_ROOT'])&&$_SERVER['DOCUMENT_ROOT']==='/app') $_SERVER['base_path'] = '/';
+    else $_SERVER['base_path'] = path_format(substr($_SERVER['SCRIPT_NAME'], 0, -10) . '/');
+    if (isset($_SERVER['UNENCODED_URL'])) $_SERVER['REQUEST_URI'] = $_SERVER['UNENCODED_URL'];
     $p = strpos($_SERVER['REQUEST_URI'],'?');
     if ($p>0) $path = substr($_SERVER['REQUEST_URI'], 0, $p);
     else $path = $_SERVER['REQUEST_URI'];
@@ -16,6 +21,21 @@ function getpath()
 
 function getGET()
 {
+    if (!$_POST) {
+        if (!!$HTTP_RAW_POST_DATA) {
+            $tmpdata = $HTTP_RAW_POST_DATA;
+        } else {
+            $tmpdata = file_get_contents('php://input');
+        }
+        if (!!$tmpdata) {
+            $postbody = explode("&", $tmpdata);
+            foreach ($postbody as $postvalues) {
+                $pos = strpos($postvalues,"=");
+                $_POST[urldecode(substr($postvalues,0,$pos))]=urldecode(substr($postvalues,$pos+1));
+            }
+        }
+    }
+    if (isset($_SERVER['UNENCODED_URL'])) $_SERVER['REQUEST_URI'] = $_SERVER['UNENCODED_URL'];
     $p = strpos($_SERVER['REQUEST_URI'],'?');
     if ($p>0) {
         $getstr = substr($_SERVER['REQUEST_URI'], $p+1);
@@ -41,23 +61,22 @@ function getGET()
 
 function getConfig($str, $disktag = '')
 {
-    global $InnerEnv;
-    global $Base64Env;
-    //include 'config.php';
-    $s = file_get_contents('config.php');
-    //$configs = substr($s, 18, -2);
+    global $slash;
+    $projectPath = splitlast(__DIR__, $slash)[0];
+    $configPath = $projectPath . $slash . '.data' . $slash . 'config.php';
+    $s = file_get_contents($configPath);
     $configs = '{' . splitlast(splitfirst($s, '{')[1], '}')[0] . '}';
     if ($configs!='') {
         $envs = json_decode($configs, true);
-        if (in_array($str, $InnerEnv)) {
+        if (isInnerEnv($str)) {
             if ($disktag=='') $disktag = $_SERVER['disktag'];
             if (isset($envs[$disktag][$str])) {
-                if (in_array($str, $Base64Env)) return equal_replace($envs[$disktag][$str],1);
+                if (isBase64Env($str)) return base64y_decode($envs[$disktag][$str]);
                 else return $envs[$disktag][$str];
             }
         } else {
             if (isset($envs[$str])) {
-                if (in_array($str, $Base64Env)) return equal_replace($envs[$str],1);
+                if (isBase64Env($str)) return base64y_decode($envs[$str]);
                 else return $envs[$str];
             }
         }
@@ -67,20 +86,19 @@ function getConfig($str, $disktag = '')
 
 function setConfig($arr, $disktag = '')
 {
-    global $InnerEnv;
-    global $Base64Env;
+    global $slash;
     if ($disktag=='') $disktag = $_SERVER['disktag'];
-    //include 'config.php';
-    $s = file_get_contents('config.php');
-    //$configs = substr($s, 18, -2);
+    $projectPath = splitlast(__DIR__, $slash)[0];
+    $configPath = $projectPath . $slash . '.data' . $slash . 'config.php';
+    $s = file_get_contents($configPath);
     $configs = '{' . splitlast(splitfirst($s, '{')[1], '}')[0] . '}';
     if ($configs!='') $envs = json_decode($configs, true);
-    $disktags = explode("|",getConfig('disktag'));
+    $disktags = explode("|", getConfig('disktag'));
     $indisk = 0;
     $operatedisk = 0;
     foreach ($arr as $k => $v) {
-        if (in_array($k, $InnerEnv)) {
-            if (in_array($k, $Base64Env)) $envs[$disktag][$k] = equal_replace($v);
+        if (isInnerEnv($k)) {
+            if (isBase64Env($k)) $envs[$disktag][$k] = base64y_encode($v);
             else $envs[$disktag][$k] = $v;
             $indisk = 1;
         } elseif ($k=='disktag_add') {
@@ -90,8 +108,15 @@ function setConfig($arr, $disktag = '')
             $disktags = array_diff($disktags, [ $v ]);
             $envs[$v] = '';
             $operatedisk = 1;
+        } elseif ($k=='disktag_copy') {
+            $newtag = $v . '_' . date("Ymd_His");
+            $envs[$newtag] = $envs[$v];
+            array_push($disktags, $newtag);
+            $operatedisk = 1;
+        } elseif ($k=='disktag_rename' || $k=='disktag_newname') {
+            if ($arr['disktag_rename']!=$arr['disktag_newname']) $operatedisk = 1;
         } else {
-            if (in_array($k, $Base64Env)) $envs[$k] = equal_replace($v);
+            if (isBase64Env($k)) $envs[$k] = base64y_encode($v);
             else $envs[$k] = $v;
         }
     }
@@ -102,17 +127,30 @@ function setConfig($arr, $disktag = '')
         $envs[$disktag] = $diskconfig;
     }
     if ($operatedisk) {
-        $disktags = array_unique($disktags);
-        foreach ($disktags as $disktag) if ($disktag!='') $disktag_s .= $disktag . '|';
-        if ($disktag_s!='') $envs['disktag'] = substr($disktag_s, 0, -1);
-        else $envs['disktag'] = '';
+        if (isset($arr['disktag_newname']) && $arr['disktag_newname']!='') {
+            $tags = [];
+            foreach ($disktags as $tag) {
+                if ($tag==$arr['disktag_rename']) array_push($tags, $arr['disktag_newname']);
+                else array_push($tags, $tag);
+            }
+            $envs['disktag'] = implode('|', $tags);
+            $envs[$arr['disktag_newname']] = $envs[$arr['disktag_rename']];
+            unset($envs[$arr['disktag_rename']]);
+        } else {
+            $disktags = array_unique($disktags);
+            foreach ($disktags as $disktag) if ($disktag!='') $disktag_s .= $disktag . '|';
+            if ($disktag_s!='') $envs['disktag'] = substr($disktag_s, 0, -1);
+            else $envs['disktag'] = '';
+        }
     }
     $envs = array_filter($envs, 'array_value_isnot_null');
-    ksort($envs);
+    //ksort($envs);
+    sortConfig($envs);
+    
     //echo '<pre>'. json_encode($envs, JSON_PRETTY_PRINT).'</pre>';
     $prestr = '<?php $configs = \'' . PHP_EOL;
     $aftstr = PHP_EOL . '\';';
-    $response = file_put_contents('config.php', $prestr . json_encode($envs, JSON_PRETTY_PRINT) . $aftstr);
+    $response = file_put_contents($configPath, $prestr . json_encode($envs, JSON_PRETTY_PRINT) . $aftstr);
     if ($response>0) return json_encode( [ 'response' => 'success' ] );
     return json_encode( [ 'message' => 'Failed to write config.', 'code' => 'failed' ] );
 }
@@ -181,7 +219,7 @@ function install()
             //if (location.port!="") url += ":" + location.port;
             url += location.pathname;
             if (url.substr(-1)!="/") url += "/";
-            url += "config.php";
+            url += "app.json";
             //alert(url);
             var xhr4 = new XMLHttpRequest();
             xhr4.open("GET", url);
@@ -227,7 +265,7 @@ language:<br>';
         return message($html, $title, 201);
     }
     $html .= '<a href="?install0">'.getconstStr('ClickInstall').'</a>, '.getconstStr('LogintoBind');
-    $title = 'Error';
+    $title = 'Install';
     return message($html, $title, 201);
 }
 
@@ -239,17 +277,6 @@ function ConfigWriteable()
     setConfig([ 'tmp' => '' ]);
     if ($tmp == $t) return true;
     if ($r) return true;
-    return false;
-}
-
-function RewriteEngineOn()
-{
-    $http_type = ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == 'on') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https')) ? 'https://' : 'http://';
-    $tmpurl = $http_type . $_SERVER['SERVER_NAME'].':'.$_SERVER['SERVER_PORT'];
-    $tmpurl .= path_format($_SERVER['base_path'] . '/config.php');
-    $tmp = curl_request($tmpurl);
-    if ($tmp['stat']==200) return false;
-    if ($tmp['stat']==201) return true; //when install return 201, after installed return 404 or 200;
     return false;
 }
 
@@ -272,12 +299,14 @@ function setConfigResponse($response)
 
 function OnekeyUpate($auth = 'qkqpttgf', $project = 'OneManager-php', $branch = 'master')
 {
+    $slash = '/';
+    if (strpos(__DIR__, ':')) $slash = '\\';
     // __DIR__ is xxx/platform
-    $projectPath = splitlast(__DIR__, '/')[0];
+    $projectPath = splitlast(__DIR__, $slash)[0];
 
     // 从github下载对应tar.gz，并解压
     $url = 'https://github.com/' . $auth . '/' . $project . '/tarball/' . urlencode($branch) . '/';
-    $tarfile = $projectPath.'/github.tar.gz';
+    $tarfile = $projectPath . $slash .'github.tar.gz';
     $githubfile = file_get_contents($url);
     if (!$githubfile) return 0;
     file_put_contents($tarfile, $githubfile);
@@ -286,41 +315,45 @@ function OnekeyUpate($auth = 'qkqpttgf', $project = 'OneManager-php', $branch = 
         $phar->extractTo($projectPath, null, true);//路径 要解压的文件 是否覆盖
     } else {
         ob_start();
-        passthru('tar -xzvf '.$tarfile,$stat);
+        passthru('tar -xzvf ' . $tarfile, $stat);
         ob_get_clean();
     }
     unlink($tarfile);
 
     $outPath = '';
     $tmp = scandir($projectPath);
-    $name = $auth.'-'.$project;
+    $name = $auth . '-' . $project;
     foreach ($tmp as $f) {
         if ( substr($f, 0, strlen($name)) == $name) {
-            $outPath = $projectPath . '/' . $f;
+            $outPath = $projectPath . $slash . $f;
             break;
         }
     }
-    //error_log($outPath);
+    //error_log1($outPath);
     if ($outPath=='') return 0;
 
     //unlink($outPath.'/config.php');
-    rename($projectPath.'/config.php', $outPath.'/config.php');
-
-    return moveFolder($outPath, $projectPath);
+    $response = rename($projectPath . $slash . '.data' . $slash . 'config.php', $outPath . $slash . '.data' . $slash . 'config.php');
+    if (!$response) {
+        $tmp1['code'] = "Move Failed";
+        $tmp1['message'] = "Can not move " . $projectPath . $slash . '.data' . $slash . 'config.php' . " to " . $outPath . $slash . '.data' . $slash . 'config.php';
+        return json_encode($tmp1);
+    }
+    return moveFolder($outPath, $projectPath, $slash);
 }
 
-function moveFolder($from, $to)
+function moveFolder($from, $to, $slash)
 {
-    if (substr($from, -1)=='/') $from = substr($from, 0, -1);
-    if (substr($to, -1)=='/') $to = substr($to, 0, -1);
+    if (substr($from, -1)==$slash) $from = substr($from, 0, -1);
+    if (substr($to, -1)==$slash) $to = substr($to, 0, -1);
     if (!file_exists($to)) mkdir($to, 0777);
     $handler=opendir($from);
     while($filename=readdir($handler)) {
         if($filename != '.' && $filename != '..'){
-            $fromfile = $from.'/'.$filename;
-            $tofile = $to.'/'.$filename;
+            $fromfile = $from . $slash . $filename;
+            $tofile = $to . $slash . $filename;
             if(is_dir($fromfile)){// 如果读取的某个对象是文件夹，则递归
-                $response = moveFolder($fromfile, $tofile);
+                $response = moveFolder($fromfile, $tofile, $slash);
                 if (api_error(setConfigResponse($response))) return $response;
             }else{
                 //if (file_exists($tofile)) unlink($tofile);
